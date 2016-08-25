@@ -5,6 +5,7 @@ import android.graphics.BitmapFactory;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Message;
+import android.support.v4.util.LruCache;
 import android.util.Log;
 
 import java.io.IOException;
@@ -18,6 +19,7 @@ public class ThumbnailDownloader<T> extends HandlerThread {
     private static final String TAG= "ThumbnailDownloader";
     private static final int MESSAGE_DOWNLOAD = 0;
 
+    private LruCache<String, Bitmap> mLruCache;
     private boolean mHasQuit = false;
     private Handler mRequestHandler;
     private ConcurrentMap<T, String> mRequestMap = new ConcurrentHashMap<>();
@@ -34,6 +36,7 @@ public class ThumbnailDownloader<T> extends HandlerThread {
     public ThumbnailDownloader(Handler responseHandler) {
         super(TAG);
         mResponseHandler = responseHandler;
+        mLruCache = new LruCache<String, Bitmap>(20);
     }
 
     @Override
@@ -71,30 +74,42 @@ public class ThumbnailDownloader<T> extends HandlerThread {
         mRequestHandler.removeMessages(MESSAGE_DOWNLOAD);
     }
     private void handleRequest(final T target) {
-        try {
-            final String url = mRequestMap.get(target);
+        final String url = mRequestMap.get(target);
+        final Bitmap bitmap = downloadImage(url);
+        Log.i(TAG, "Bitmap Created");
 
-            if (url == null){
-                return;
-            }
-
-            byte[] bitmapBytes = new FlickrFetchr().getUrlBytes(url);
-            final Bitmap bitmap = BitmapFactory.decodeByteArray(bitmapBytes, 0, bitmapBytes.length);
-            Log.i(TAG, "Bitmap Created");
-
-            mResponseHandler.post(new Runnable() {
-                @Override
-                public void run() {
-                    if(mRequestMap.get(target) != url || mHasQuit){
-                        return;
-                    }
-
-                    mRequestMap.remove(target);
-                    mThumbnailDownloadListener.onThumbnailDownloaded(target, bitmap);
+        mResponseHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                if(mRequestMap.get(target) != url || mHasQuit){
+                    return;
                 }
-            });
+
+                mRequestMap.remove(target);
+                mThumbnailDownloadListener.onThumbnailDownloaded(target, bitmap);
+            }
+        });
+
+    }
+
+    private Bitmap downloadImage(String url){
+        Bitmap bitmap;
+        if (url.equals(null)){
+            return null;
+        }
+
+        bitmap = mLruCache.get(url);
+        try {
+        if(bitmap.equals(null)) {
+            byte[] bitmapBytes = new byte[0];
+            bitmapBytes = new FlickrFetchr().getUrlBytes(url);
+            bitmap = BitmapFactory.decodeByteArray(bitmapBytes, 0, bitmapBytes.length);
+            Log.i(TAG, "Downloaded Image");
+            mLruCache.put(url, bitmap);
+        }
         } catch (IOException ioe){
             Log.e(TAG, "Error downloading image", ioe);
         }
+        return bitmap;
     }
 }
